@@ -76,6 +76,7 @@ from captum.attr._utils.stat import (
     Mean,
     Min,
     MSE,
+    StatValue,
     StdDev,
     Sum,
     Var,
@@ -156,5 +157,6 @@ __all__ = [
     "Max",
     "Sum",
     "Count",
+    "StatValue",
     "SummarizerSingleTensor",
 ]
