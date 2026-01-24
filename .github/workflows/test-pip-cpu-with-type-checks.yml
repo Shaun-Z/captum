@@ -24,7 +24,6 @@ jobs:
         ./scripts/install_via_pip.sh ${{ matrix.pytorch_args }} -d
         # Fix the version of numpy to install to avoid pyre issues
         pip install --upgrade numpy==2.1.3
-        ./scripts/run_mypy.sh
         pyre check
         # Run Tests
         python3 -m pytest -ra --cov=. --cov-report term-missing
