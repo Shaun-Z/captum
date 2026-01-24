@@ -68,7 +68,6 @@ TEST_REQUIRES = [
     "parameterized",
     "black==25.11.0",
     "flake8",
-    "mypy>=0.760",
     "pyre-check-nightly==0.0.101750936314",
     "usort==1.1.0",
     "ufmt",
