@@ -1,4 +1,4 @@
-name: Unit-tests for Pip install with type checks
+name: Type checks
 
 on:
   pull_request:
@@ -25,5 +25,3 @@ jobs:
         # Fix the version of numpy to install to avoid pyre issues
         pip install --upgrade numpy==2.1.3
         pyre check
-        # Run Tests
-        python3 -m pytest -ra --cov=. --cov-report term-missing
