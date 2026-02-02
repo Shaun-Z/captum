@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
 
-# Welcome to the PyTorch Captum setup.py.
-#
-# Environment variables for feature toggles:
-#
-#   BUILD_INSIGHTS
-#     enables Captum Insights build via yarn
-#
-
 import os
 import re
-import subprocess
 import sys
 
 from setuptools import find_packages, setup
@@ -32,12 +23,6 @@ if sys.version_info < (REQUIRED_MAJOR, REQUIRED_MINOR):
     sys.exit(error)
 
 
-# Allow for environment variable checks
-def check_env_flag(name, default=""):
-    return os.getenv(name, default).upper() in ["ON", "1", "YES", "TRUE", "Y"]
-
-
-BUILD_INSIGHTS = check_env_flag("BUILD_INSIGHTS")
 VERBOSE_SCRIPT = True
 for arg in sys.argv:
     if arg == "-q" or arg == "--quiet":
@@ -51,15 +36,7 @@ def report(*args):
         pass
 
 
-INSIGHTS_REQUIRES = ["flask", "ipython", "ipywidgets", "jupyter", "flask-compress"]
-
-INSIGHTS_FILE_SUBDIRS = [
-    "insights/attr_vis/frontend/build",
-    "insights/attr_vis/models",
-    "insights/attr_vis/widget/static",
-]
-
-TUTORIALS_REQUIRES = INSIGHTS_REQUIRES + ["torchtext", "torchvision"]
+TUTORIALS_REQUIRES = ["torchtext", "torchvision"]
 
 # TODO: review if all of them are still needed
 TEST_REQUIRES = [
@@ -104,32 +81,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 
-# optionally build Captum Insights via yarn
-def build_insights():
-    report("-- Building Captum Insights")
-    command = "./scripts/build_insights.sh"
-    report("Running: " + command)
-    subprocess.check_call(command)
-
-
-# explore paths under root and subdirs to gather package files
-def get_package_files(root, subdirs):
-    paths = []
-    for subroot in subdirs:
-        paths.append(os.path.join(subroot, "*"))
-        for path, dirs, _ in os.walk(os.path.join(root, subroot)):
-            for d in dirs:
-                paths.append(os.path.join(path, d, "*")[len(root) + 1 :])
-    return paths
-
-
 if __name__ == "__main__":
-
-    if BUILD_INSIGHTS:
-        build_insights()
-
-    package_files = get_package_files("captum", INSIGHTS_FILE_SUBDIRS)
-
     setup(
         name="captum",
         version=version,
@@ -178,22 +130,7 @@ if __name__ == "__main__":
         packages=find_packages(exclude=("tests", "tests.*")),
         extras_require={
             "dev": DEV_REQUIRES,
-            "insights": INSIGHTS_REQUIRES,
             "test": TEST_REQUIRES,
             "tutorials": TUTORIALS_REQUIRES,
         },
-        package_data={"captum": package_files},
-        data_files=[
-            (
-                "share/jupyter/nbextensions/jupyter-captum-insights",
-                [
-                    "captum/insights/attr_vis/frontend/widget/src/extension.js",
-                    "captum/insights/attr_vis/frontend/widget/src/index.js",
-                ],
-            ),
-            (
-                "etc/jupyter/nbconfig/notebook.d",
-                ["captum/insights/attr_vis/widget/jupyter-captum-insights.json"],
-            ),
-        ],
     )
