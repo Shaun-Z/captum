@@ -51,24 +51,7 @@ Captum can also be used by application engineers who are using trained models in
 
 ##### Installing the latest release
 
-The latest release of Captum is easily installed either via
-[Anaconda](https://www.anaconda.com/distribution/#download-section) (recommended) or via `pip`.
-
-**with `conda`**
-
-You can install captum from any of the following supported conda channels:
-
-- channel: `pytorch`
-
-  ```sh
-  conda install captum -c pytorch
-  ```
-
-- channel: `conda-forge`
-
-  ```sh
-  conda install captum -c conda-forge
-  ```
+Install released Captum via `pip`.
 
 **With `pip`**
 
