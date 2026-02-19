@@ -233,6 +233,7 @@ class TestLayerID(BaseTest):
         for s in test_cases:
             lid = LayerID.parse(s)
             result_str = str(lid)
+            self.assertEqual(result_str, s, f"str() mismatch for '{s}'")
             reparsed = LayerID.parse(result_str)
             self.assertEqual(lid, reparsed, f"Roundtrip failed for '{s}'")
 
@@ -240,6 +241,12 @@ class TestLayerID(BaseTest):
         lid = LayerID.parse("V.L1.H5")
         with self.assertRaises(AttributeError):
             lid.layer_num = 2  # type: ignore[misc]
+        with self.assertRaises(AttributeError):
+            lid.encoder_type = "T"  # type: ignore[misc]
+        with self.assertRaises(AttributeError):
+            lid.head_num = 0  # type: ignore[misc]
+        with self.assertRaises(AttributeError):
+            lid.component = "mlp"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
