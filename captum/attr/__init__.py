@@ -29,6 +29,10 @@ from captum.attr._core.llm_attr import (
     LLMGradientAttribution,
     RemoteLLMAttribution,
 )
+from captum.attr._core.multimodal_attr import (
+    MultiModalAttribution,
+    MultiModalModelWrapper,
+)
 from captum.attr._core.lrp import LRP
 from captum.attr._core.neuron.neuron_conductance import NeuronConductance
 from captum.attr._core.neuron.neuron_deep_lift import NeuronDeepLift, NeuronDeepLiftShap
@@ -115,6 +119,8 @@ __all__ = [
     "LLMAttribution",
     "LLMAttributionResult",
     "LLMGradientAttribution",
+    "MultiModalAttribution",
+    "MultiModalModelWrapper",
     "RemoteLLMAttribution",
     "RemoteLLMProvider",
     "VLLMProvider",
