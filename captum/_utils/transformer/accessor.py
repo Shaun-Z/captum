@@ -230,10 +230,11 @@ class ActivationAccessor:
             handle.remove()
 
         result = activation["value"]
-        assert result is not None, (
-            f"No activation captured for layer '{layer_id}'. "
-            "Verify that the layer is traversed during the forward pass."
-        )
+        if result is None:
+            raise RuntimeError(
+                f"No activation captured for layer '{layer_id}'. "
+                "Verify that the layer is traversed during the forward pass."
+            )
 
         if lid.head_num is not None:
             result = self._extract_head(result, lid.head_num)
@@ -318,10 +319,11 @@ class ActivationAccessor:
         for lid in parsed_ids:
             key = str(lid)
             val = activations[key]
-            assert val is not None, (
-                f"No activation captured for layer '{key}'. "
-                "Verify that the layer is traversed during the forward pass."
-            )
+            if val is None:
+                raise RuntimeError(
+                    f"No activation captured for layer '{key}'. "
+                    "Verify that the layer is traversed during the forward pass."
+                )
             if self.device is not None:
                 val = val.to(self.device)
             result[key] = val
