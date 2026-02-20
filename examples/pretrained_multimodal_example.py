@@ -153,7 +153,7 @@ def example_llava() -> None:
     # 2. Wrap with captum's MultiModalModelWrapper
     #    "llava" is a pre-registered architecture config that maps:
     #      V.L<i> -> model.vision_tower.vision_model.encoder.layers.<i>
-    #      T.L<i> -> model.language_model.model.layers.<i>
+    #      T.L<i> -> model.language_model.layers.<i>
     wrapper = MultiModalModelWrapper(model, "llava")
 
     # 3. Resolve layers from both vision and text encoders

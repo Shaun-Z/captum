@@ -185,12 +185,16 @@ def _make_arch_configs() -> Dict[str, TransformerArchConfig]:
     # LLaVA-style multimodal models (vision + language)
     # For HuggingFace LlavaForConditionalGeneration (transformers >= 4.46):
     #   model.vision_tower.vision_model.encoder.layers[i] — CLIP vision encoder
-    #   model.language_model.model.layers[i]              — LLaMA text decoder
+    #   model.language_model.layers[i]                    — LLaMA text decoder
+    # Note: In recent transformers versions, LlavaForConditionalGeneration
+    # wraps internals under .model (LlavaModel), and .model.language_model
+    # resolves directly to LlamaModel (not LlamaForCausalLM), which has
+    # .layers directly rather than .model.layers.
     configs["llava"] = TransformerArchConfig(
         vision_encoder_prefix=(
             "model.vision_tower.vision_model.encoder.layers"
         ),
-        text_encoder_prefix="model.language_model.model.layers",
+        text_encoder_prefix="model.language_model.layers",
         attn_module_name="self_attn",
         mlp_module_name="mlp",
         output_module_name="layer_norm2",
