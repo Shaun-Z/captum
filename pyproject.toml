@@ -28,6 +28,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    "accelerate>=1.12.0",
     "matplotlib",
     "numpy",
     "packaging",
