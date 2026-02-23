@@ -376,3 +376,120 @@ class ActivationAccessor:
             f"Cannot extract head from activation with shape "
             f"{activation.shape}. Expected 3D or 4D tensor."
         )
+
+    def get_attention_weights(
+        self,
+        layer_id: Union[str, LayerID],
+        # pyre-fixme[2]: Parameter must be annotated.
+        *model_args: Any,
+        head: Optional[Union[int, List[int]]] = None,
+        # pyre-fixme[2]: Parameter must be annotated.
+        **model_kwargs: Any,
+    ) -> Tensor:
+        r"""
+        Extract attention weight matrices from the attention module of a
+        specified layer.
+
+        Registers a forward hook on the attention sub-module, runs the
+        model's forward pass, and returns the attention weight tensor.
+        Many transformer implementations return attention weights as the
+        second element of the attention module's output tuple when
+        ``output_attentions=True`` is passed.
+
+        Args:
+            layer_id (str or LayerID): A layer identifier such as
+                        ``"L0"``, ``"T.L3"``, or ``"V.L1"``. The method
+                        automatically targets the attention sub-module
+                        within the specified layer.
+            *model_args: Positional arguments passed to the model's
+                        forward method.
+            head (int or list of int or None, optional): Which attention
+                        head(s) to return. If ``None``, returns all heads.
+                        If an ``int``, returns a single head's weights
+                        with shape ``(batch, seq_len, seq_len)``. If a
+                        ``list``, returns selected heads with shape
+                        ``(batch, len(heads), seq_len, seq_len)``.
+                        Default: ``None``
+            **model_kwargs: Keyword arguments passed to the model's
+                        forward method. Typically should include
+                        ``output_attentions=True`` for HuggingFace models.
+
+        Returns:
+            Tensor: Attention weight tensor. Full shape is
+            ``(batch, num_heads, seq_len, seq_len)`` when ``head=None``.
+
+        Raises:
+            RuntimeError: If no attention weights could be captured.
+            ValueError: If the attention module output does not contain
+                        a second element (the attention weight tensor).
+
+        Examples::
+
+            >>> accessor = ActivationAccessor(model, "gpt2")
+            >>> # All heads in layer 0
+            >>> weights = accessor.get_attention_weights(
+            ...     "L0", input_ids, output_attentions=True
+            ... )  # shape: (batch, 12, seq, seq)
+            >>> # Single head
+            >>> w_h3 = accessor.get_attention_weights(
+            ...     "L0", input_ids, head=3, output_attentions=True
+            ... )  # shape: (batch, seq, seq)
+        """
+        lid = self._parse_layer_id(layer_id)
+
+        # Build path to the attention sub-module within this layer
+        attn_component = self.arch_config.get_component_name("attn")
+        if attn_component is None:
+            raise ValueError(
+                "Cannot determine attention sub-module name. "
+                "Ensure 'attn_module_name' is set in the architecture config."
+            )
+
+        # Resolve the attn module: prefix.layer_num.attn_module
+        prefix = self.arch_config.get_encoder_prefix(lid.encoder_type)
+        if prefix is None:
+            raise ValueError(
+                f"Cannot resolve encoder prefix for layer '{layer_id}'."
+            )
+        attn_path = f"{prefix}.{lid.layer_num}.{attn_component}"
+        attn_module = self._get_module_by_path(attn_path)
+
+        captured: Dict[str, Optional[Tensor]] = {"weights": None}
+
+        def hook_fn(
+            mod: nn.Module,
+            inp: Tuple[Tensor, ...],
+            output: Union[Tensor, Tuple[Tensor, ...]],
+        ) -> None:
+            if isinstance(output, tuple) and len(output) >= 2:
+                w = output[1]
+                if isinstance(w, Tensor):
+                    captured["weights"] = w.detach()
+
+        handle = attn_module.register_forward_hook(hook_fn)
+        try:
+            with torch.no_grad():
+                self.model(*model_args, **model_kwargs)
+        finally:
+            handle.remove()
+
+        weights = captured["weights"]
+        if weights is None:
+            raise RuntimeError(
+                f"No attention weights captured for layer '{layer_id}'. "
+                "Ensure the model returns attention weights (e.g., pass "
+                "output_attentions=True for HuggingFace models) and that "
+                "the attention implementation is 'eager'."
+            )
+
+        # Select head(s)
+        if head is not None:
+            if isinstance(head, int):
+                weights = weights[:, head]  # (batch, seq, seq)
+            else:
+                weights = weights[:, head]  # (batch, len(heads), seq, seq)
+
+        if self.device is not None:
+            weights = weights.to(self.device)
+
+        return weights

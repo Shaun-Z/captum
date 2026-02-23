@@ -492,11 +492,74 @@ class TestActivationAccessor(BaseTest):
             self.assertIn(key, acts)
             self.assertIsInstance(acts[key], Tensor)
 
+    def test_get_attention_weights_all_heads(self) -> None:
+        """Test extracting attention weights from a layer."""
+        model = DummyTextEncoder().to(self.device)
+        model.eval()
+        accessor = ActivationAccessor(model, DUMMY_TEXT_CONFIG, device=self.device)
+        input_ids = torch.randint(0, 64, (1, 5), device=self.device)
+
+        weights = accessor.get_attention_weights("L0", input_ids)
+        self.assertIsInstance(weights, Tensor)
+        # nn.MultiheadAttention with default average_attn_weights=True
+        # returns (batch, seq_len, seq_len)
+        self.assertEqual(weights.dim(), 3)
+        self.assertEqual(weights.shape[0], 1)
+        self.assertEqual(weights.shape[1], 5)
+        self.assertEqual(weights.shape[2], 5)
+
+    def test_get_attention_weights_single_head(self) -> None:
+        """Test extracting attention weights for a specific head."""
+        model = DummyTextEncoder().to(self.device)
+        model.eval()
+        accessor = ActivationAccessor(model, DUMMY_TEXT_CONFIG, device=self.device)
+        input_ids = torch.randint(0, 64, (1, 5), device=self.device)
+
+        # With averaged weights (3D), head=0 selects index 0 along dim 1
+        weights = accessor.get_attention_weights("L0", input_ids, head=0)
+        self.assertIsInstance(weights, Tensor)
+
     def test_resolve_invalid_layer_raises(self) -> None:
         model = DummyTextEncoder(num_layers=2).to(self.device)
         accessor = ActivationAccessor(model, DUMMY_TEXT_CONFIG)
         with self.assertRaises((IndexError, AttributeError)):
             accessor.resolve_module("L5")  # Only 2 layers
+
+    def test_visualize_attention_heads(self) -> None:
+        """Test visualize_attention_heads with a 4D tensor."""
+        import matplotlib
+        matplotlib.use("Agg")
+        from captum._utils.transformer.visualization import (
+            visualize_attention_heads,
+        )
+
+        # Simulate (batch, num_heads, seq_len, seq_len)
+        weights = torch.rand(1, 4, 6, 6)
+        tokens = [f"t{i}" for i in range(6)]
+
+        # All heads
+        fig = visualize_attention_heads(
+            weights, tokens=tokens, use_pyplot=False,
+        )
+        self.assertEqual(len(fig.axes), 4 + 4)  # 4 plots + 4 colorbars
+
+        # Single head
+        fig2 = visualize_attention_heads(
+            weights, head=2, tokens=tokens, use_pyplot=False,
+        )
+        self.assertIsNotNone(fig2)
+
+        # Multiple heads
+        fig3 = visualize_attention_heads(
+            weights, head=[0, 3], tokens=tokens, use_pyplot=False,
+        )
+        self.assertIsNotNone(fig3)
+
+        # 2D input (single head, no batch)
+        fig4 = visualize_attention_heads(
+            weights[0, 0], tokens=tokens, use_pyplot=False,
+        )
+        self.assertIsNotNone(fig4)
 
 
 # ---------------------------------------------------------------------------
