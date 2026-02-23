@@ -23,6 +23,14 @@ class LayerID:
         - ``"V.L1.attn"`` — vision encoder, layer 1, attention module
         - ``"T.L2.mlp"`` — text encoder, layer 2, MLP module
         - ``"V.L0.output"`` — vision encoder, layer 0, output/layernorm
+        - ``"L0.mlp.0"`` — layer 0, first sub-module of the MLP
+        - ``"L0.mlp.1"`` — layer 0, second sub-module of the MLP (e.g.,
+          activation function)
+
+    The component field supports dotted sub-paths for probing arbitrary
+    nested sub-modules within a layer. For example, if the MLP is an
+    ``nn.Sequential(Linear, ReLU, Linear)``, then ``"L0.mlp.1"`` targets
+    the ``ReLU`` activation, allowing you to capture its input or output.
 
     Attributes:
         encoder_type (str or None): Encoder prefix. ``'V'`` for vision
@@ -35,7 +43,9 @@ class LayerID:
         component (str or None): Sub-module within the layer. Common values
                     include ``'attn'`` (self-attention), ``'mlp'``
                     (feed-forward), and ``'output'`` (layer norm / output
-                    projection). ``None`` means the layer block itself.
+                    projection). Supports dotted sub-paths such as
+                    ``'mlp.0'`` or ``'mlp.1'`` for nested sub-modules.
+                    ``None`` means the layer block itself.
     """
 
     encoder_type: Optional[str] = None
@@ -44,10 +54,14 @@ class LayerID:
     component: Optional[str] = None
 
     # Pattern: optional encoder prefix (V/T), required layer (L<num>),
-    # optional head (H<num>) or component name (attn/mlp/output/...)
+    # optional head (H<num>) or component name (attn/mlp/output/...).
+    # Component names may contain dotted sub-paths (e.g., mlp.0, mlp.1)
+    # for probing nested sub-modules. Component names must not start with
+    # 'H' followed by digits to avoid ambiguity with head notation.
     _PATTERN: str = (
         r"^(?:(?P<encoder>[VT])\.)?L(?P<layer>\d+)"
-        r"(?:\.(?:H(?P<head>\d+)|(?P<component>[a-zA-Z_]+)))?$"
+        r"(?:\.(?:H(?P<head>\d+)"
+        r"|(?P<component>(?!H\d)[a-zA-Z_][a-zA-Z0-9_.]*)))?$"
     )
 
     @classmethod

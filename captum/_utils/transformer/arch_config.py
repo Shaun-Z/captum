@@ -67,9 +67,14 @@ class TransformerArchConfig:
         r"""
         Resolve a component short name to the actual sub-module name.
 
+        Supports dotted sub-paths: for example, ``'mlp.0'`` is resolved by
+        mapping the first segment (``'mlp'``) through the standard/custom
+        component map and appending the remaining segments (``'.0'``).
+
         Args:
             component (str or None): Component short name such as
-                        ``'attn'``, ``'mlp'``, or ``'output'``.
+                        ``'attn'``, ``'mlp'``, or ``'output'``, optionally
+                        followed by a dotted sub-path like ``'mlp.0'``.
 
         Returns:
             str or None: The resolved sub-module name, or ``None`` if
@@ -78,21 +83,24 @@ class TransformerArchConfig:
         if component is None:
             return None
 
+        # Split on the first dot to handle sub-paths like "mlp.0"
+        first, _, rest = component.partition(".")
+
         # Check custom component map first, then standard names
-        if component in self.component_map:
-            return self.component_map[component]
+        if first in self.component_map:
+            resolved = self.component_map[first]
+        else:
+            standard_map = {
+                "attn": self.attn_module_name,
+                "mlp": self.mlp_module_name,
+                "output": self.output_module_name,
+            }
+            resolved = standard_map.get(first, first)
 
-        standard_map = {
-            "attn": self.attn_module_name,
-            "mlp": self.mlp_module_name,
-            "output": self.output_module_name,
-        }
-        if component in standard_map:
-            return standard_map[component]
-
-        # If the component doesn't match any known name, return it as-is
-        # This allows direct sub-module names to be used
-        return component
+        # Re-attach the sub-path if present
+        if rest:
+            return f"{resolved}.{rest}"
+        return resolved
 
     def get_encoder_prefix(self, encoder_type: Optional[str]) -> Optional[str]:
         r"""
