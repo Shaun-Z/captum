@@ -1,135 +1,114 @@
 #!/usr/bin/env python3
 """
-Probe All Intermediate Activations — Example
-=============================================
+Probe All Intermediate Activations — Pretrained GPT-2 Example
+==============================================================
 
 This script demonstrates how to probe **every** intermediate activation
-inside the first transformer block using captum's ``ActivationAccessor``
-and compact layer-ID notation.
+inside the first transformer block of a pretrained GPT-2 model using
+captum's ``ActivationAccessor`` and compact layer-ID notation.
 
-In a standard transformer layer::
+GPT-2's transformer block has the following structure::
 
-    TransformerLayer
-    ├── self_attn   (MultiheadAttention)
-    ├── mlp         (Sequential)
-    │   ├── 0       (Linear — FFN input projection)
-    │   ├── 1       (GELU  — non-linear activation)
-    │   └── 2       (Linear — FFN output projection)
-    └── layer_norm  (LayerNorm)
+    GPT2Block
+    ├── ln_1          (LayerNorm — pre-attention norm)
+    ├── attn          (GPT2Attention)
+    │   ├── c_attn    (Conv1D — combined Q/K/V projection)
+    │   └── c_proj    (Conv1D — output projection)
+    ├── ln_2          (LayerNorm — pre-FFN norm)
+    └── mlp           (GPT2MLP)
+        ├── c_fc      (Conv1D — FFN input projection, d→4d)
+        ├── act       (NewGELUActivation — non-linear activation)
+        └── c_proj    (Conv1D — FFN output projection, 4d→d)
 
 The layer-ID notation lets you target any of these::
 
-    "L0"            → full layer output
-    "L0.attn"       → attention sub-module output
-    "L0.mlp"        → full MLP / FFN output
-    "L0.mlp.0"      → first Linear output   (activation fn input)
-    "L0.mlp.1"      → GELU activation output (activation fn output)
-    "L0.mlp.2"      → second Linear output   (FFN projection)
-    "L0.output"     → LayerNorm output
+    "L0"              → full block output (GPT2Block)
+    "L0.attn"         → attention sub-module (GPT2Attention)
+    "L0.attn.c_attn"  → combined Q/K/V projection
+    "L0.attn.c_proj"  → attention output projection
+    "L0.mlp"          → full MLP / FFN output (GPT2MLP)
+    "L0.mlp.c_fc"     → FFN input projection  (activation fn INPUT)
+    "L0.mlp.act"      → GELU activation       (activation fn OUTPUT)
+    "L0.mlp.c_proj"   → FFN output projection
+    "L0.output"       → pre-FFN LayerNorm (ln_2)
 
 For **multimodal** models, prefix with ``V.`` or ``T.``::
 
-    "V.L0.mlp.1"    → vision encoder, layer 0, activation fn output
-    "T.L2.mlp.0"    → text encoder, layer 2, FFN input projection
+    "V.L0.mlp.act"   → vision encoder, layer 0, activation fn output
+    "T.L2.mlp.c_fc"  → text encoder, layer 2, FFN input projection
+
+Requirements:
+    pip install captum transformers
 
 Usage:
-    pip install captum
     python examples/probe_all_activations_example.py
 """
 
 import torch
-from torch import nn, Tensor
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from captum._utils.transformer import TransformerArchConfig
 from captum._utils.transformer.accessor import ActivationAccessor
-
-
-# ---------------------------------------------------------------------------
-# 1. Dummy transformer model (same structure as real models)
-# ---------------------------------------------------------------------------
-
-
-class TransformerLayer(nn.Module):
-    """A single transformer block with self-attn + MLP + LayerNorm."""
-
-    def __init__(self, d: int = 32, nhead: int = 4) -> None:
-        super().__init__()
-        self.self_attn = nn.MultiheadAttention(d, nhead, batch_first=True)
-        self.mlp = nn.Sequential(
-            nn.Linear(d, d * 4),   # index 0: FFN input projection
-            nn.GELU(),             # index 1: non-linear activation
-            nn.Linear(d * 4, d),   # index 2: FFN output projection
-        )
-        self.layer_norm = nn.LayerNorm(d)
-
-    def forward(self, x: Tensor) -> Tensor:
-        attn_out, _ = self.self_attn(x, x, x)
-        x = self.layer_norm(x + attn_out)
-        return x + self.mlp(x)
-
-
-class TinyLLM(nn.Module):
-    """A toy text-only transformer (3 layers, vocab 128)."""
-
-    def __init__(self, vocab: int = 128, d: int = 32, n_layers: int = 3) -> None:
-        super().__init__()
-        self.embedding = nn.Embedding(vocab, d)
-        self.layers = nn.ModuleList(
-            [TransformerLayer(d) for _ in range(n_layers)]
-        )
-        self.head = nn.Linear(d, vocab)
-
-    def forward(self, input_ids: Tensor) -> Tensor:
-        x = self.embedding(input_ids)
-        for layer in self.layers:
-            x = layer(x)
-        return self.head(x)
-
-
-# ---------------------------------------------------------------------------
-# 2. Architecture config
-# ---------------------------------------------------------------------------
-
-config = TransformerArchConfig(
-    text_encoder_prefix="layers",
-    attn_module_name="self_attn",
-    mlp_module_name="mlp",
-    output_module_name="layer_norm",
-    num_attention_heads=4,
-)
 
 
 def main() -> None:
     torch.manual_seed(42)
 
-    model = TinyLLM()
+    # -------------------------------------------------------------------
+    # 1. Load pretrained GPT-2 model and tokenizer
+    # -------------------------------------------------------------------
+    model_name = "gpt2"
+    print(f"Loading {model_name}...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
     model.eval()
-    accessor = ActivationAccessor(model, config)
-
-    input_ids = torch.randint(0, 128, (1, 8))  # batch=1, seq_len=8
-    print(f"Input shape: {input_ids.shape}\n")
+    print(
+        f"Model loaded: "
+        f"{sum(p.numel() for p in model.parameters()) / 1e6:.1f}M params"
+    )
+    print()
 
     # -------------------------------------------------------------------
-    # All probe-able locations in the first transformer block (L0)
+    # 2. Create ActivationAccessor with built-in "gpt2" architecture config
+    #    This maps:
+    #      L<i>       → transformer.h.<i>
+    #      L<i>.attn  → transformer.h.<i>.attn
+    #      L<i>.mlp   → transformer.h.<i>.mlp
+    #      L<i>.output→ transformer.h.<i>.ln_2
+    # -------------------------------------------------------------------
+    accessor = ActivationAccessor(model, "gpt2")
+
+    # -------------------------------------------------------------------
+    # 3. Tokenize input
+    # -------------------------------------------------------------------
+    text = "The quick brown fox jumps over the lazy dog"
+    input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
+    print(f"Input text:  '{text}'")
+    print(f"Input shape: {input_ids.shape}")
+    print()
+
+    # -------------------------------------------------------------------
+    # 4. All probe-able locations in the first transformer block (L0)
     # -------------------------------------------------------------------
     probe_ids = [
-        # Layer-level
-        ("L0",          "Full layer output"),
-        # Attention sub-module
-        ("L0.attn",     "Self-attention output"),
+        # Full block
+        ("L0",              "Full block output (GPT2Block)"),
+        # Attention sub-module and its internals
+        ("L0.attn",         "Self-attention output (GPT2Attention)"),
+        ("L0.attn.c_attn",  "Combined Q/K/V projection (Conv1D)"),
+        ("L0.attn.c_proj",  "Attention output projection (Conv1D)"),
         # Full MLP / FFN
-        ("L0.mlp",      "Full MLP/FFN output"),
-        # FFN internals  ← NEW: dotted sub-path notation
-        ("L0.mlp.0",    "FFN Linear-1 output  (activation fn INPUT)"),
-        ("L0.mlp.1",    "FFN GELU output      (activation fn OUTPUT)"),
-        ("L0.mlp.2",    "FFN Linear-2 output  (FFN projection)"),
-        # LayerNorm
-        ("L0.output",   "LayerNorm output"),
+        ("L0.mlp",          "Full MLP output (GPT2MLP)"),
+        # FFN internals — dotted sub-path notation
+        ("L0.mlp.c_fc",     "FFN input projection (activation fn INPUT)"),
+        ("L0.mlp.act",      "GELU activation (activation fn OUTPUT)"),
+        ("L0.mlp.c_proj",   "FFN output projection"),
+        # Pre-FFN LayerNorm
+        ("L0.output",       "Pre-FFN LayerNorm (ln_2)"),
     ]
 
-    print("=" * 72)
-    print("Probing all intermediate activations in the first transformer block")
-    print("=" * 72)
+    print("=" * 76)
+    print("Probing all intermediate activations in GPT-2 block 0")
+    print("=" * 76)
 
     # --- Method 1: one-by-one extraction ---
     print("\n--- Method 1: Single-layer extraction (one forward pass each) ---\n")
@@ -137,7 +116,7 @@ def main() -> None:
         module = accessor.resolve_module(layer_id)
         act = accessor.get_activation(layer_id, input_ids)
         print(
-            f"  {layer_id:15s}  shape={str(act.shape):20s}  "
+            f"  {layer_id:20s}  shape={str(act.shape):25s}  "
             f"module={module.__class__.__name__:25s}  # {description}"
         )
 
@@ -148,34 +127,45 @@ def main() -> None:
     for layer_id, description in probe_ids:
         act = activations[layer_id]
         print(
-            f"  {layer_id:15s}  shape={str(act.shape):20s}  # {description}"
+            f"  {layer_id:20s}  shape={str(act.shape):25s}  # {description}"
         )
 
     # --- Verify FFN activation function properties ---
     print("\n--- Verification: FFN activation function ---\n")
-    gelu_input = activations["L0.mlp.0"]
-    gelu_output = activations["L0.mlp.1"]
-    expected_output = torch.nn.functional.gelu(gelu_input)
-    match = torch.allclose(gelu_output, expected_output, atol=1e-6)
-    print(f"  GELU(Linear-1 output) == mlp.1 output? {match}")
+    fc_output = activations["L0.mlp.c_fc"]
+    act_output = activations["L0.mlp.act"]
     print(
-        f"  Linear-1 output (activation fn input)  "
-        f"min={gelu_input.min():.4f}  max={gelu_input.max():.4f}"
+        f"  c_fc output  (activation fn input)   "
+        f"min={fc_output.min():.4f}  max={fc_output.max():.4f}"
     )
     print(
-        f"  GELU output (activation fn output)     "
-        f"min={gelu_output.min():.4f}  max={gelu_output.max():.4f}"
+        f"  act output   (activation fn output)  "
+        f"min={act_output.min():.4f}  max={act_output.max():.4f}"
     )
 
     # --- Probe layer input (instead of output) ---
     print("\n--- Bonus: Capture layer INPUT instead of output ---\n")
     act_input = accessor.get_activation(
-        "L0.mlp.1", input_ids, attribute_to_layer_input=True
+        "L0.mlp.act", input_ids, attribute_to_layer_input=True
     )
-    print(f"  L0.mlp.1 input  shape={act_input.shape}  "
-          f"(should match Linear-1 output)")
-    print(f"  Matches mlp.0 output? "
-          f"{torch.allclose(act_input, gelu_input, atol=1e-6)}")
+    print(
+        f"  L0.mlp.act input  shape={act_input.shape}  "
+        f"(should match c_fc output)"
+    )
+    print(
+        f"  Matches c_fc output? "
+        f"{torch.allclose(act_input, fc_output, atol=1e-6)}"
+    )
+
+    # --- Multi-layer extraction across all 12 blocks ---
+    print("\n--- Extracting MLP activations from all 12 blocks ---\n")
+    mlp_act_ids = [f"L{i}.mlp.act" for i in range(12)]
+    mlp_acts = accessor.get_multi_layer_activations(mlp_act_ids, input_ids)
+    for name, act in mlp_acts.items():
+        print(
+            f"  {name:15s}  shape={str(act.shape):25s}  "
+            f"mean={act.mean().item():.6f}"
+        )
 
     print("\nDone!")
 
