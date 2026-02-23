@@ -106,10 +106,10 @@ def main() -> None:
     # -------------------------------------------------------------------
     from PIL import Image
 
-    image = Image.fromarray(
-        torch.randint(0, 256, (image_size, image_size, 3), dtype=torch.uint8)
-        .numpy()
-    )
+    image_data = torch.randint(
+        0, 256, (image_size, image_size, 3), dtype=torch.uint8
+    ).numpy()
+    image = Image.fromarray(image_data)
     inputs = processor(images=image, return_tensors="pt")
     pixel_values = inputs["pixel_values"]
     print(f"Input image shape: {pixel_values.shape}")  # (1, 3, 224, 224)
