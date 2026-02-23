@@ -358,3 +358,202 @@ def visualize_activation_distribution(
         plt.show()
 
     return fig
+
+
+def visualize_attention_heads(
+    attention_weights: Union[Tensor, "npt.NDArray[Any]"],
+    tokens: Optional[Sequence[str]] = None,
+    head: Optional[Union[int, List[int]]] = None,
+    batch_index: int = 0,
+    figsize: Optional[Tuple[int, int]] = None,
+    cmap: Union[str, "Colormap"] = "viridis",
+    show_values: bool = False,
+    value_fmt: str = ".2f",
+    title: Optional[str] = None,
+    use_pyplot: bool = True,
+) -> "Figure":
+    r"""
+    Visualize attention weight matrices as 2D heatmaps.
+
+    Renders one heatmap per attention head, with query tokens on the
+    y-axis and key tokens on the x-axis. Each cell ``(i, j)`` shows how
+    much query token *i* attends to key token *j*.
+
+    The input can be the full attention tensor for all heads, a single
+    head's attention matrix, or a subset of heads.
+
+    Args:
+        attention_weights (Tensor or ndarray): Attention weight tensor.
+                    Accepted shapes:
+
+                    - ``(batch, num_heads, seq_len, seq_len)`` — all heads
+                    - ``(batch, seq_len, seq_len)`` — single head
+                    - ``(num_heads, seq_len, seq_len)`` — no batch dim
+                    - ``(seq_len, seq_len)`` — single head, no batch dim
+
+        tokens (sequence of str, optional): Token strings used as tick
+                    labels for both axes. If ``None``, integer indices are
+                    shown.
+                    Default: ``None``
+        head (int or list of int or None, optional): Which head(s) to
+                    plot when ``attention_weights`` has a head dimension.
+                    If ``None``, plots all heads. If an ``int``, plots
+                    only that head. If a list, plots the selected heads.
+                    Default: ``None``
+        batch_index (int): Which sample in the batch to visualize.
+                    Default: ``0``
+        figsize (tuple of int, optional): Figure size ``(width, height)``.
+                    If ``None``, automatically computed.
+                    Default: ``None``
+        cmap (str or Colormap): Colormap for the heatmaps.
+                    Default: ``"viridis"``
+        show_values (bool): If ``True``, overlay numerical values.
+                    Only practical for short sequences (≤ 15 tokens).
+                    Default: ``False``
+        value_fmt (str): Format string for cell values.
+                    Default: ``".2f"``
+        title (str, optional): Overall figure title.
+                    Default: ``None``
+        use_pyplot (bool): If ``True``, display the plot with
+                    ``plt.show()``. If ``False``, return without showing.
+                    Default: ``True``
+
+    Returns:
+        matplotlib.figure.Figure: The figure containing the heatmap(s).
+
+    Examples::
+
+        >>> from captum._utils.transformer.visualization import (
+        ...     visualize_attention_heads,
+        ... )
+        >>> weights = accessor.get_attention_weights(
+        ...     "L0", input_ids, output_attentions=True
+        ... )
+        >>> # Plot all heads
+        >>> fig = visualize_attention_heads(weights, tokens=tokens)
+        >>> # Plot a single head
+        >>> fig = visualize_attention_heads(weights, head=3, tokens=tokens)
+    """
+    assert HAS_MATPLOTLIB, (
+        "matplotlib is required for visualization. "
+        "Please run 'pip install matplotlib'."
+    )
+
+    data = _to_numpy(attention_weights)
+
+    # Normalize to (num_heads, seq_len, seq_len)
+    if data.ndim == 4:
+        # (batch, num_heads, seq_len, seq_len)
+        data = data[batch_index]  # (num_heads, seq, seq)
+    elif data.ndim == 3:
+        # Could be (num_heads, seq, seq) or (batch, seq, seq) for single head
+        # Heuristic: if last two dims are equal, treat as
+        # (num_heads, seq, seq).
+        if data.shape[1] == data.shape[2]:
+            pass  # already (num_heads, seq, seq)
+        else:
+            data = data[batch_index]  # (seq, seq)
+            data = data[np.newaxis, :]  # (1, seq, seq)
+    elif data.ndim == 2:
+        # (seq, seq) — single head
+        data = data[np.newaxis, :]  # (1, seq, seq)
+    else:
+        raise ValueError(
+            f"Unexpected attention weights shape: {attention_weights.shape}. "
+            "Expected 2D, 3D, or 4D tensor."
+        )
+
+    # Select requested heads
+    num_heads = data.shape[0]
+    if head is not None:
+        if isinstance(head, int):
+            head_indices = [head]
+        else:
+            head_indices = list(head)
+        data = data[head_indices]
+        head_labels = [f"Head {h}" for h in head_indices]
+    else:
+        head_labels = [f"Head {h}" for h in range(num_heads)]
+
+    n_heads = data.shape[0]
+    seq_len = data.shape[1]
+
+    # Determine grid layout
+    if n_heads == 1:
+        n_cols, n_rows = 1, 1
+    else:
+        n_cols = min(4, n_heads)
+        n_rows = (n_heads + n_cols - 1) // n_cols
+
+    if figsize is None:
+        cell = max(3, min(6, seq_len * 0.5))
+        figsize = (int(n_cols * cell + 1), int(n_rows * cell + 1))
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=figsize, squeeze=False,
+    )
+
+    tick_labels: Optional[List[str]] = None
+    if tokens is not None and len(tokens) == seq_len:
+        tick_labels = list(tokens)
+
+    for idx in range(n_heads):
+        row, col = divmod(idx, n_cols)
+        ax: Axes = axes[row, col]
+        head_data = data[idx]  # (seq, seq)
+
+        im = ax.imshow(
+            head_data,
+            cmap=cmap,
+            vmin=0.0,
+            vmax=float(head_data.max()) if head_data.max() > 0 else 1.0,
+            aspect="equal",
+            interpolation="nearest",
+        )
+        ax.set_title(head_labels[idx], fontsize=9, fontweight="bold")
+
+        if tick_labels is not None:
+            ax.set_xticks(range(seq_len))
+            ax.set_xticklabels(
+                tick_labels, rotation=45, ha="right", fontsize=7,
+            )
+            ax.set_yticks(range(seq_len))
+            ax.set_yticklabels(tick_labels, fontsize=7)
+        else:
+            ax.set_xticks(range(seq_len))
+            ax.set_xticklabels(range(seq_len), fontsize=7)
+            ax.set_yticks(range(seq_len))
+            ax.set_yticklabels(range(seq_len), fontsize=7)
+
+        ax.set_xlabel("Key", fontsize=8)
+        ax.set_ylabel("Query", fontsize=8)
+
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        # Overlay values for small sequences
+        if show_values and seq_len <= 15:
+            vmax = float(head_data.max()) if head_data.max() > 0 else 1.0
+            for i in range(seq_len):
+                for j in range(seq_len):
+                    val = head_data[i, j]
+                    color = "white" if val > vmax * 0.6 else "black"
+                    ax.text(
+                        j, i, f"{val:{value_fmt}}",
+                        ha="center", va="center",
+                        fontsize=5, color=color,
+                    )
+
+    # Hide unused subplots
+    for idx in range(n_heads, n_rows * n_cols):
+        row, col = divmod(idx, n_cols)
+        axes[row, col].set_visible(False)
+
+    if title:
+        fig.suptitle(title, fontsize=13, fontweight="bold")
+
+    fig.tight_layout()
+
+    if use_pyplot:
+        plt.show()
+
+    return fig

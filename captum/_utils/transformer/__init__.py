@@ -12,6 +12,7 @@ from captum._utils.transformer.visualization import (
     visualize_activation_distribution,
     visualize_activation_stats,
     visualize_activations,
+    visualize_attention_heads,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "visualize_activations",
     "visualize_activation_stats",
     "visualize_activation_distribution",
+    "visualize_attention_heads",
 ]
