@@ -198,6 +198,10 @@ class TestLayerID(BaseTest):
             ("V.L1.attn", "V", 1, None, "attn"),
             ("T.L3.mlp", "T", 3, None, "mlp"),
             ("V.L0.output", "V", 0, None, "output"),
+            ("L0.mlp.0", None, 0, None, "mlp.0"),
+            ("L0.mlp.1", None, 0, None, "mlp.1"),
+            ("V.L1.mlp.0", "V", 1, None, "mlp.0"),
+            ("T.L2.attn.q_proj", "T", 2, None, "attn.q_proj"),
         ]
     )
     def test_parse_valid(
@@ -220,7 +224,7 @@ class TestLayerID(BaseTest):
             ("invalid",),
             ("X.L1",),  # X is not V or T
             ("V.L",),  # missing layer number
-            ("V.L1.H5.extra",),  # too many parts
+            ("V.L1.H5.extra",),  # H5 is head notation, extra part is invalid
         ]
     )
     def test_parse_invalid(self, layer_str: str) -> None:
@@ -229,7 +233,8 @@ class TestLayerID(BaseTest):
 
     def test_str_roundtrip(self) -> None:
         """Test that str(LayerID.parse(s)) produces a valid re-parseable string."""
-        test_cases = ["L0", "L5", "V.L1", "T.L3", "L1.H5", "V.L1.H5", "L0.attn"]
+        test_cases = ["L0", "L5", "V.L1", "T.L3", "L1.H5", "V.L1.H5", "L0.attn",
+                      "L0.mlp.0", "V.L1.mlp.1"]
         for s in test_cases:
             lid = LayerID.parse(s)
             result_str = str(lid)
@@ -306,6 +311,23 @@ class TestTransformerArchConfig(BaseTest):
             component_map={"qkv": "self_attn.qkv_proj"},
         )
         self.assertEqual(config.get_component_name("qkv"), "self_attn.qkv_proj")
+
+    def test_dotted_component_name_resolution(self) -> None:
+        """Test that dotted sub-paths resolve the first segment correctly."""
+        config = TransformerArchConfig(
+            text_encoder_prefix="layers",
+            attn_module_name="self_attn",
+            mlp_module_name="feed_forward",
+        )
+        # "mlp.0" → resolve "mlp" to "feed_forward", append ".0"
+        self.assertEqual(config.get_component_name("mlp.0"), "feed_forward.0")
+        self.assertEqual(config.get_component_name("mlp.1"), "feed_forward.1")
+        # "attn.q_proj" → resolve "attn" to "self_attn", append ".q_proj"
+        self.assertEqual(
+            config.get_component_name("attn.q_proj"), "self_attn.q_proj"
+        )
+        # Unknown prefix passed through as-is
+        self.assertEqual(config.get_component_name("custom.sub"), "custom.sub")
 
     def test_add_custom_to_registry(self) -> None:
         """Test adding a custom architecture to the global registry."""
@@ -414,6 +436,59 @@ class TestActivationAccessor(BaseTest):
         )
         self.assertEqual(len(acts), 3)
         for key in ["L0", "L1", "L2"]:
+            self.assertIn(key, acts)
+            self.assertIsInstance(acts[key], Tensor)
+
+    def test_resolve_ffn_sub_modules(self) -> None:
+        """Test resolving FFN sub-modules using dotted component paths."""
+        model = DummyTextEncoder().to(self.device)
+        accessor = ActivationAccessor(model, DUMMY_TEXT_CONFIG)
+        # mlp is nn.Sequential(Linear, ReLU, Linear)
+        module_0 = accessor.resolve_module("L0.mlp.0")
+        self.assertIsInstance(module_0, nn.Linear)
+        self.assertIs(module_0, model.layers[0].mlp[0])
+
+        module_1 = accessor.resolve_module("L0.mlp.1")
+        self.assertIsInstance(module_1, nn.ReLU)
+        self.assertIs(module_1, model.layers[0].mlp[1])
+
+        module_2 = accessor.resolve_module("L0.mlp.2")
+        self.assertIsInstance(module_2, nn.Linear)
+        self.assertIs(module_2, model.layers[0].mlp[2])
+
+    def test_get_activation_ffn_sub_modules(self) -> None:
+        """Test extracting activations from FFN sub-modules."""
+        model = DummyTextEncoder().to(self.device)
+        model.eval()
+        accessor = ActivationAccessor(model, DUMMY_TEXT_CONFIG, device=self.device)
+        input_ids = torch.randint(0, 64, (1, 5), device=self.device)
+
+        # Get activation of the first Linear in the MLP (input to ReLU)
+        act_linear1 = accessor.get_activation("L0.mlp.0", input_ids)
+        self.assertIsInstance(act_linear1, Tensor)
+
+        # Get activation of the ReLU (output of activation function)
+        act_relu = accessor.get_activation("L0.mlp.1", input_ids)
+        self.assertIsInstance(act_relu, Tensor)
+
+        # ReLU output should have no negative values
+        self.assertTrue((act_relu >= 0).all())
+
+        # Get activation of the second Linear
+        act_linear2 = accessor.get_activation("L0.mlp.2", input_ids)
+        self.assertIsInstance(act_linear2, Tensor)
+
+    def test_get_multi_layer_activations_with_sub_modules(self) -> None:
+        """Test extracting multiple activations including sub-modules."""
+        model = DummyTextEncoder().to(self.device)
+        model.eval()
+        accessor = ActivationAccessor(model, DUMMY_TEXT_CONFIG, device=self.device)
+        input_ids = torch.randint(0, 64, (1, 5), device=self.device)
+        acts = accessor.get_multi_layer_activations(
+            ["L0", "L0.mlp", "L0.mlp.0", "L0.mlp.1"], input_ids
+        )
+        self.assertEqual(len(acts), 4)
+        for key in ["L0", "L0.mlp", "L0.mlp.0", "L0.mlp.1"]:
             self.assertIn(key, acts)
             self.assertIsInstance(acts[key], Tensor)
 
