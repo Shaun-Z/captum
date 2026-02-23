@@ -12,6 +12,8 @@ in ``captum._utils.transformer.visualization`` to produce:
      dimension
   3. **Distribution plots** comparing activation value distributions
      across different sub-modules
+  4. **Attention head heatmaps** showing query-key attention patterns
+     for all heads, a single head, or a subset of heads in a layer
 
 Prerequisites:
     pip install captum transformers matplotlib
@@ -21,6 +23,11 @@ Usage:
 
 The script saves the figures to PNG files in the current directory
 and also displays them if running interactively.
+
+.. note::
+   Attention weight extraction requires ``output_attentions=True`` and
+   the ``attn_implementation="eager"`` setting in the model config, as
+   SDPA / Flash Attention backends do not return per-head weights.
 """
 
 import torch
@@ -31,6 +38,7 @@ from captum._utils.transformer.visualization import (
     visualize_activation_distribution,
     visualize_activation_stats,
     visualize_activations,
+    visualize_attention_heads,
 )
 
 
@@ -39,11 +47,15 @@ def main() -> None:
 
     # -------------------------------------------------------------------
     # 1. Load pretrained GPT-2
+    #    Use attn_implementation="eager" so attention weights are returned
+    #    when output_attentions=True.
     # -------------------------------------------------------------------
     model_name = "gpt2"
     print(f"Loading {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, attn_implementation="eager"
+    )
     model.eval()
     print(
         f"Model loaded: "
@@ -152,6 +164,62 @@ def main() -> None:
         "all_blocks_gelu_stats.png", dpi=150, bbox_inches="tight"
     )
     print("  Saved: all_blocks_gelu_stats.png")
+
+    # -------------------------------------------------------------------
+    # 9. Visualization 6: Attention heads — all heads in layer 0
+    #    get_attention_weights() hooks into the attention sub-module and
+    #    captures the weight matrix (batch, num_heads, seq_len, seq_len).
+    # -------------------------------------------------------------------
+    print("Extracting attention weights for layer 0...")
+    attn_weights_l0 = accessor.get_attention_weights(
+        "L0", input_ids, output_attentions=True
+    )
+    print(f"  Attention weights shape: {attn_weights_l0.shape}")
+
+    print("Generating attention heatmaps (all heads, layer 0)...")
+    fig6 = visualize_attention_heads(
+        attn_weights_l0,
+        tokens=tokens,
+        title="GPT-2 Layer 0 — All Attention Heads",
+        use_pyplot=False,
+    )
+    fig6.savefig(
+        "attn_heads_all_layer0.png", dpi=150, bbox_inches="tight"
+    )
+    print("  Saved: attn_heads_all_layer0.png")
+
+    # -------------------------------------------------------------------
+    # 10. Visualization 7: Attention heads — single head (head 3)
+    # -------------------------------------------------------------------
+    print("Generating attention heatmap (head 3, layer 0)...")
+    fig7 = visualize_attention_heads(
+        attn_weights_l0,
+        head=3,
+        tokens=tokens,
+        show_values=True,
+        title="GPT-2 Layer 0, Head 3",
+        use_pyplot=False,
+    )
+    fig7.savefig(
+        "attn_head3_layer0.png", dpi=150, bbox_inches="tight"
+    )
+    print("  Saved: attn_head3_layer0.png")
+
+    # -------------------------------------------------------------------
+    # 11. Visualization 8: Attention heads — selected subset
+    # -------------------------------------------------------------------
+    print("Generating attention heatmaps (heads 0, 5, 11 — layer 0)...")
+    fig8 = visualize_attention_heads(
+        attn_weights_l0,
+        head=[0, 5, 11],
+        tokens=tokens,
+        title="GPT-2 Layer 0 — Heads 0, 5, 11",
+        use_pyplot=False,
+    )
+    fig8.savefig(
+        "attn_heads_subset_layer0.png", dpi=150, bbox_inches="tight"
+    )
+    print("  Saved: attn_heads_subset_layer0.png")
 
     print("\nDone! All visualizations saved.")
 
