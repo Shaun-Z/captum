@@ -61,7 +61,7 @@ class LayerID:
     _PATTERN: str = (
         r"^(?:(?P<encoder>[VT])\.)?L(?P<layer>\d+)"
         r"(?:\.(?:H(?P<head>\d+)"
-        r"|(?P<component>(?!H\d)[a-zA-Z_][a-zA-Z0-9_.]*)))?$"
+        r"|(?P<component>(?!H\d)[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)*)))?$"
     )
 
     @classmethod

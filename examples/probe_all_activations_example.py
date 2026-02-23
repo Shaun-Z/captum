@@ -158,10 +158,14 @@ def main() -> None:
     expected_output = torch.nn.functional.gelu(gelu_input)
     match = torch.allclose(gelu_output, expected_output, atol=1e-6)
     print(f"  GELU(Linear-1 output) == mlp.1 output? {match}")
-    print(f"  Linear-1 output (activation fn input)  min={gelu_input.min():.4f}  "
-          f"max={gelu_input.max():.4f}")
-    print(f"  GELU output (activation fn output)     min={gelu_output.min():.4f}  "
-          f"max={gelu_output.max():.4f}")
+    print(
+        f"  Linear-1 output (activation fn input)  "
+        f"min={gelu_input.min():.4f}  max={gelu_input.max():.4f}"
+    )
+    print(
+        f"  GELU output (activation fn output)     "
+        f"min={gelu_output.min():.4f}  max={gelu_output.max():.4f}"
+    )
 
     # --- Probe layer input (instead of output) ---
     print("\n--- Bonus: Capture layer INPUT instead of output ---\n")
