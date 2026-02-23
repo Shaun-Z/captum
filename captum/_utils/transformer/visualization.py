@@ -502,11 +502,14 @@ def visualize_attention_heads(
         ax: Axes = axes[row, col]
         head_data = data[idx]  # (seq, seq)
 
+        head_max = float(head_data.max())
+        vmax_val = head_max if head_max > 0 else 1.0
+
         im = ax.imshow(
             head_data,
             cmap=cmap,
             vmin=0.0,
-            vmax=float(head_data.max()) if head_data.max() > 0 else 1.0,
+            vmax=vmax_val,
             aspect="equal",
             interpolation="nearest",
         )
@@ -532,11 +535,10 @@ def visualize_attention_heads(
 
         # Overlay values for small sequences
         if show_values and seq_len <= 15:
-            vmax = float(head_data.max()) if head_data.max() > 0 else 1.0
             for i in range(seq_len):
                 for j in range(seq_len):
                     val = head_data[i, j]
-                    color = "white" if val > vmax * 0.6 else "black"
+                    color = "white" if val > vmax_val * 0.6 else "black"
                     ax.text(
                         j, i, f"{val:{value_fmt}}",
                         ha="center", va="center",
