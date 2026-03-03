@@ -244,3 +244,198 @@ activations = accessor.get_multi_layer_activations(probe_ids, input_ids)
 for name, act in activations.items():
     print(f"{name:20s}  shape={act.shape}  mean={act.mean():.6f}")
 ```
+
+---
+
+## Bi-Modal / Encoder-Decoder Relevance Propagation
+
+Beyond activation probing, Captum provides **gradient-weighted attention
+relevance propagation** for explaining predictions made by multimodal and
+encoder-decoder transformers.  The implementation follows the algorithm from:
+
+> Chefer, H., Gur, S., & Wolf, L. (2021). *Generic Attention-model
+> Explainability for Interpreting Bi-Modal and Encoder-Decoder
+> Transformers*. ICCV 2021.
+
+### How it works
+
+The method maintains **relevance matrices** that track how every token in
+each modality contributes to every other token.  Starting from an identity
+matrix (each token only relevant to itself), it propagates relevance
+through gradient-weighted attention at each transformer layer.
+
+The key equations are:
+
+| Equation | Name | Purpose |
+|----------|------|---------|
+| Eq. 5 | `avg_heads` | Gradient-weighted, positive-only head averaging |
+| Eq. 6 | `apply_self_attention_rules` (self) | Self-attention update for self-relevance |
+| Eq. 7 | `apply_self_attention_rules` (cross) | Self-attention update for cross-relevance |
+| Eq. 8–9 | `normalize_self_relevance` | Residual normalization |
+| Eq. 10 | `apply_mm_attention_rules` | Cross-attention relevance propagation |
+| Eq. 11 | `apply_mm_attention_rules` (Eq. 11) | Feedback from reciprocal cross-memory |
+
+### Supported architecture patterns
+
+| Template | Architecture | Relevance matrices | Example models |
+|----------|-------------|-------------------|----------------|
+| **A** — Single-stream | ViT, GPT-2 | `R` (n×n) | VisualBERT (concat) |
+| **B** — Co-attention | LXMERT, ViLBERT | `R_tt, R_ii, R_ti, R_it` | LXMERT |
+| **C** — Encoder-decoder | DETR | `R_ee, R_qq, R_qe` | DETR |
+
+### Relevance Propagation API
+
+```python
+from captum.attr import MultiModalModelWrapper
+```
+
+#### Template A — Single-stream (ViT / GPT-2)
+
+```python
+explainer = MultiModalModelWrapper(model, "gpt2", mode="single_stream")
+
+# Generate per-token relevance matrix
+R = explainer.generate_relevance(input_ids, target_index=class_idx)
+
+# Extract CLS-token relevance (row 0)
+cls_relevance = MultiModalModelWrapper.readout(R, readout_index=0)
+# cls_relevance[i] = how much token i contributes to the CLS decision
+```
+
+#### Template B — Co-attention (LXMERT / ViLBERT)
+
+```python
+explainer = MultiModalModelWrapper(model, arch_config, mode="co_attention")
+
+result = explainer.generate_co_attention(
+    input_ids, pixel_values,
+    target_index=answer_idx,
+    text_self_layer_ids=["T.L0", "T.L1", ...],
+    image_self_layer_ids=["V.L0", "V.L1", ...],
+    cross_layer_ids=[("T.L5", "V.L5"), ...],  # (text←image, image←text)
+)
+
+# result["R_tt"] — text-to-text relevance
+# result["R_ti"] — text-to-image relevance  (most useful for VQA)
+# result["R_ii"] — image-to-image relevance
+# result["R_it"] — image-to-text relevance
+
+# Readout for CLS token
+readout = MultiModalModelWrapper.readout(result, readout_index=0, modality="text")
+text_relevance  = readout["text"]   # contribution of each text token
+image_relevance = readout["image"]  # contribution of each image token
+```
+
+#### Template C — Encoder-decoder (DETR)
+
+```python
+explainer = MultiModalModelWrapper(model, arch_config, mode="encoder_decoder")
+
+result = explainer.generate_encoder_decoder(
+    pixel_values,
+    target_fn=lambda out: out[0, query_idx, class_idx],
+    encoder_self_layer_ids=["V.L0", "V.L1", ...],
+    decoder_self_layer_ids=["T.L0", "T.L1", ...],
+    decoder_cross_layer_ids=["T.L0", "T.L1", ...],
+)
+
+# result["R_qe"][j, :] — relevance of each encoder token for query j
+readout = MultiModalModelWrapper.readout(
+    result, readout_index=query_idx, modality="query"
+)
+encoder_relevance = readout["encoder"]
+```
+
+### Low-level utilities
+
+The building-block functions are also available for custom pipelines:
+
+```python
+from captum.attr import (
+    avg_heads,
+    apply_self_attention_rules,
+    normalize_self_relevance,
+    apply_mm_attention_rules,
+)
+
+# Eq. 5: gradient-weighted head averaging
+A_bar = avg_heads(attn_weights, attn_grads)  # (q, k)
+
+# Eq. 6-7: self-attention update
+R_ss, R_sq = apply_self_attention_rules(R_ss, R_sq, A_bar)
+
+# Eq. 8-9: residual normalization
+R_bar = normalize_self_relevance(R_ss)
+
+# Eq. 10-11: cross-attention update
+R_ss, R_sq = apply_mm_attention_rules(
+    R_ss, R_qq, R_sq, R_qs, A_sq_bar, use_eq11=True
+)
+```
+
+### AttentionHookManager
+
+To capture attention weights and their gradients during forward/backward
+passes, use `AttentionHookManager`:
+
+```python
+from captum.attr import AttentionHookManager
+
+# Hook into attention modules
+manager = AttentionHookManager(model, [model.layer[i].attn for i in range(12)])
+
+# Forward + backward
+output = model(input_ids)
+loss = output[0, target_class]
+loss.backward()
+
+# Retrieve captured data
+for i in range(12):
+    attn, grad = manager.get_attention_and_gradient(i)
+    A_bar = avg_heads(attn[0], grad[0])
+    # ... propagate relevance ...
+
+manager.remove_hooks()
+```
+
+### Complete Example
+
+```python
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from captum.attr import MultiModalModelWrapper
+
+model = AutoModelForSequenceClassification.from_pretrained(
+    "textattack/bert-base-uncased-SST-2",
+    attn_implementation="eager",
+)
+model.eval()
+tokenizer = AutoTokenizer.from_pretrained("textattack/bert-base-uncased-SST-2")
+
+from captum._utils.transformer import TransformerArchConfig
+
+bert_config = TransformerArchConfig(
+    text_encoder_prefix="bert.encoder.layer",
+    attn_module_name="attention",
+    mlp_module_name="intermediate",
+    output_module_name="output",
+    num_attention_heads=12,
+)
+
+explainer = MultiModalModelWrapper(model, bert_config, mode="single_stream")
+
+text = "This movie was absolutely wonderful"
+inputs = tokenizer(text, return_tensors="pt")
+
+R = explainer.generate_single_stream(
+    **inputs,
+    target_index=1,        # positive sentiment class
+    num_layers=12,
+)
+
+tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+cls_relevance = MultiModalModelWrapper.readout(R, readout_index=0)
+
+for tok, rel in zip(tokens, cls_relevance):
+    print(f"{tok:15s}  relevance={rel:.4f}")
+```

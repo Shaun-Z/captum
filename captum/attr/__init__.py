@@ -29,7 +29,7 @@ from captum.attr._core.llm_attr import (
     LLMGradientAttribution,
     RemoteLLMAttribution,
 )
-from captum.attr._core.multimodal_attr import (
+from captum.attr._core.multimodal_explainability import (
     MultiModalAttribution,
     MultiModalModelWrapper,
 )
